@@ -59,7 +59,7 @@ async function sendPurchaseThankYouEmail(toEmail: string, orderId?: string) {
               <!-- Header / Branding -->
               <tr>
                 <td align="center" style="padding: 35px 20px 20px 20px; border-bottom: 1px solid rgba(207, 168, 86, 0.15);">
-                  <img src="${studioLogoUrl}" alt="Nimbus Tales" width="70" height="70" style="display: block; border-radius: 50%; border: 2px solid #cfa856; margin-bottom: 12px; object-fit: cover;" />
+                  <img src="${studioLogoUrl}" alt="Nimbus Tales" width="110" style="display: block; width: 110px; height: auto; border: 0; outline: none; margin-bottom: 12px;" />
                   <h1 style="color: #cfa856; font-size: 22px; margin: 0; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;">
                     Nimbus Tales
                   </h1>
