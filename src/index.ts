@@ -40,10 +40,18 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-// E-mail küldő segédfüggvény
+// E-mail küldő segédfüggvény diagnosztikai logokkal
 async function sendPurchaseThankYouEmail(toEmail: string, orderId?: string) {
+  console.log('[EMAIL] SMTP config:', {
+    host: process.env.SMTP_HOST || 'smtp.rackhost.hu',
+    port: process.env.SMTP_PORT || 465,
+    secure: process.env.SMTP_SECURE,
+    user: process.env.SMTP_USER || 'webshop@nimbus-tales.com',
+    hasPass: !!process.env.SMTP_PASS
+  });
+
   try {
-    await transporter.sendMail({
+    const info = await transporter.sendMail({
       from: `"Nimbus Tales" <${process.env.SMTP_USER || 'webshop@nimbus-tales.com'}>`,
       to: toEmail,
       subject: 'Thank you for your order! - Nimbus Tales',
@@ -61,7 +69,7 @@ async function sendPurchaseThankYouEmail(toEmail: string, orderId?: string) {
         </div>
       `,
     });
-    console.log(`[EMAIL SUCCESS] Thank you email successfully sent to: ${toEmail}`);
+    console.log(`[EMAIL SUCCESS] Thank you email successfully sent to: ${toEmail} | MessageID: ${info.messageId}`);
   } catch (emailError) {
     console.error(`[EMAIL ERROR] Failed to send email to ${toEmail}:`, emailError);
   }
@@ -308,8 +316,10 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
 
       await batch.commit();
 
-      // Bevárjuk az e-mail kiküldését a válasz visszaküldése előtt
+      // Diagnosztikai logok az e-mail küldés körül
+      console.log('[EMAIL] Starting thank-you email:', customerEmail);
       await sendPurchaseThankYouEmail(customerEmail, payload.data?.id);
+      console.log('[EMAIL] Thank-you email function finished');
     }
 
     console.log(`[WEBHOOK SUCCESS] Registered ${customerEmail} | Products:`, uniqueProductIds);
