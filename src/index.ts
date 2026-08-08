@@ -37,7 +37,7 @@ async function sendPurchaseThankYouEmail(toEmail: string, orderId?: string) {
   console.log(`[EMAIL] Sending thank-you email via Resend API to: ${toEmail}...`);
   
   const studioLogoUrl = 'https://www.nimbus-tales.com/images/nimbusTales.png'; 
-  const fourthwallSupportUrl = 'https://nimbus-tales-studio-shop.fourthwall.com/contact/order-placed/variants';
+  const fourthwallSupportUrl = 'https://nimbus-tales-studio-shop.fourthwall.com/contact/something-else';
   const shopReviewUrl = 'https://www.nimbus-tales.com/webshop';
 
   const emailHtml = `
