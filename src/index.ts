@@ -2,13 +2,13 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
-import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 
 dotenv.config();
 
-// 1. Dinamikus CORS beállítás (Éles domain + Localhost tesztelés)
+// 1. CORS Beállítás
 const rawAllowedOrigins = process.env.ALLOWED_ORIGIN || '';
 const allowedOrigins = rawAllowedOrigins
   .split(',')
@@ -29,35 +29,17 @@ initializeApp({
 const db = getFirestore();
 const app = express();
 
-// --- 2. NODEMAILER / RACKHOST SMTP KONFIGURÁCIÓ (STARTTLS - Port 587) ---
-const isSecure = process.env.SMTP_SECURE === 'true';
+// --- 2. RESEND EMAIL CLIENT ---
+const resend = new Resend(process.env.RESEND_API_KEY);
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.rackhost.hu',
-  port: Number(process.env.SMTP_PORT) || 587,
-  secure: isSecure, // 587-es portnál ez false legyen!
-  requireTLS: !isSecure, // Kikényszeríti a STARTTLS titkosítást 587-es porton
-  auth: {
-    user: process.env.SMTP_USER || 'webshop@nimbus-tales.com',
-    pass: process.env.SMTP_PASS,
-  },
-  connectionTimeout: 10000,
-});
-
-// E-mail küldő segédfüggvény diagnosztikai logokkal
+// E-mail küldő segédfüggvény Resend API-val
 async function sendPurchaseThankYouEmail(toEmail: string, orderId?: string) {
-  console.log('[EMAIL] SMTP config:', {
-    host: process.env.SMTP_HOST || 'smtp.rackhost.hu',
-    port: process.env.SMTP_PORT || 587,
-    secure: process.env.SMTP_SECURE,
-    user: process.env.SMTP_USER || 'webshop@nimbus-tales.com',
-    hasPass: !!process.env.SMTP_PASS
-  });
-
+  console.log(`[EMAIL] Sending email via Resend API to: ${toEmail}...`);
   try {
-    const info = await transporter.sendMail({
-      from: `"Nimbus Tales" <${process.env.SMTP_USER || 'webshop@nimbus-tales.com'}>`,
-      to: toEmail,
+    const data = await resend.emails.send({
+      // Ha a domain még nincs igazolva a Resendben, a teszteléshez használd az 'onboarding@resend.dev' feladót!
+      from: 'Nimbus Tales <onboarding@resend.dev>', 
+      to: [toEmail],
       subject: 'Thank you for your order! - Nimbus Tales',
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333; line-height: 1.6;">
@@ -73,9 +55,14 @@ async function sendPurchaseThankYouEmail(toEmail: string, orderId?: string) {
         </div>
       `,
     });
-    console.log(`[EMAIL SUCCESS] Thank you email successfully sent to: ${toEmail} | MessageID: ${info.messageId}`);
+
+    if (data.error) {
+      console.error(`[EMAIL ERROR] Resend returned an error:`, data.error);
+    } else {
+      console.log(`[EMAIL SUCCESS] Resend email sent successfully! Message ID:`, data.data?.id);
+    }
   } catch (emailError) {
-    console.error(`[EMAIL ERROR] Failed to send email to ${toEmail}:`, emailError);
+    console.error(`[EMAIL ERROR] Failed to send email via Resend to ${toEmail}:`, emailError);
   }
 }
 
@@ -320,7 +307,7 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
 
       await batch.commit();
 
-      console.log('[EMAIL] Starting thank-you email:', customerEmail);
+      console.log('[EMAIL] Starting thank-you email via Resend:', customerEmail);
       await sendPurchaseThankYouEmail(customerEmail, payload.data?.id);
       console.log('[EMAIL] Thank-you email function finished');
     }
