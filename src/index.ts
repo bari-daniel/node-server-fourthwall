@@ -7,9 +7,14 @@ import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 
 dotenv.config();
 
-// 1. CORS szigorítása production környezetben
-const allowedOrigin = process.env.ALLOWED_ORIGIN;
-if (!allowedOrigin && process.env.NODE_ENV === 'production') {
+// 1. Dinamikus CORS beállítás (Éles domain + Localhost tesztelés)
+const rawAllowedOrigins = process.env.ALLOWED_ORIGIN || '';
+const allowedOrigins = rawAllowedOrigins
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean);
+
+if (allowedOrigins.length === 0 && process.env.NODE_ENV === 'production') {
   console.error('[FATAL SECURITY ERROR] ALLOWED_ORIGIN is not defined in environment variables.');
   process.exit(1);
 }
@@ -23,8 +28,18 @@ initializeApp({
 const db = getFirestore();
 const app = express();
 
-// CORS kizárólag a böngészős/Angular API hívásokhoz
-const corsMiddleware = cors({ origin: allowedOrigin || '*' });
+// CORS middleware dynamic origin ellenőrzéssel
+const corsMiddleware = cors({
+  origin: (origin, callback) => {
+    // Engedélyezzük, ha nincs origin (pl. szerver-szerver hívás, Postman) 
+    // vagy ha az engedélyezett listában szerepel
+    if (!origin || allowedOrigins.includes(origin) || allowedOrigins.length === 0) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  }
+});
 
 // Nyers test (rawBody) megtartása a Base64 HMAC aláírás ellenőrzéséhez
 app.use(express.json({
@@ -158,7 +173,7 @@ app.get('/api/reviews/:productId', corsMiddleware, async (req: Request, res: Res
   }
 });
 
-// 3. Fourthwall Webhook Handler (CORS-mentes, KIZÁRÓLAG ORDER_PLACED + Kanonikus ID)
+// 3. Fourthwall Webhook Handler (CORS-mentes, Hiba-biztos Idempotenciával)
 app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promise<void> => {
   try {
     const webhookSecret = process.env.FOURTHWALL_WEBHOOK_SECRET;
@@ -203,20 +218,13 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
     const payload = req.body;
     const eventId = payload.id;
 
-    // B. Atomikus Idempotencia (.create())
+    // B. Idempotencia ellenőrzés (Létezik-e már sikeresen feldolgozott event?)
     if (eventId) {
-      try {
-        await db.collection('processed_webhooks').doc(eventId).create({
-          processedAt: FieldValue.serverTimestamp(),
-          type: payload.type || payload.event || 'UNKNOWN'
-        });
-      } catch (err: any) {
-        if (err.code === 6 || err.message?.includes('ALREADY_EXISTS')) {
-          console.log(`[WEBHOOK DUPLICATE] Event ${eventId} already processed atomically.`);
-          res.status(200).json({ received: true, note: 'Event already processed' });
-          return;
-        }
-        throw err;
+      const processedDoc = await db.collection('processed_webhooks').doc(eventId).get();
+      if (processedDoc.exists) {
+        console.log(`[WEBHOOK DUPLICATE] Event ${eventId} already processed.`);
+        res.status(200).json({ received: true, note: 'Event already processed' });
+        return;
       }
     }
 
@@ -248,13 +256,27 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
       )
     );
 
-    // F. Vásárlás elmentése
+    // F. Vásárlás elmentése + Atomikus Idempotencia rögzítés
     if (uniqueProductIds.length > 0) {
-      await customerRef.set({
+      const batch = db.batch();
+
+      // Vásárló frissítése
+      batch.set(customerRef, {
         lastOrderAt: FieldValue.serverTimestamp(),
         lastOrderId: payload.data?.id || null,
         purchasedProducts: FieldValue.arrayUnion(...uniqueProductIds)
       }, { merge: true });
+
+      // Event ID megjelölése feldolgozottként (csak ha a mentés is sikeres)
+      if (eventId) {
+        const webhookRef = db.collection('processed_webhooks').doc(eventId);
+        batch.set(webhookRef, {
+          processedAt: FieldValue.serverTimestamp(),
+          type: eventType
+        });
+      }
+
+      await batch.commit();
     }
 
     console.log(`[WEBHOOK SUCCESS] Registered ${customerEmail} | Products:`, uniqueProductIds);
