@@ -6,7 +6,6 @@ import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 
 dotenv.config();
 
-// Firebase Admin SDK inicializálása
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '{}');
 
 initializeApp({
@@ -22,40 +21,63 @@ app.use(express.json());
 interface ReviewBody {
   productId: string;
   authorName: string;
-  authorEmail?: string; // Hozzáadva a webhook azonosításhoz
+  authorEmail: string;
   rating: number;
   comment: string;
 }
 
-// 1. Új értékelés beküldése
-app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response) => {
+app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response): Promise<void> => {
   try {
     const { productId, authorName, authorEmail, rating, comment } = req.body;
 
-    if (!productId || !authorName || !rating || rating < 1 || rating > 5) {
-      res.status(400).json({ error: 'Érvénytelen adatok' });
+    // Validáció
+    if (!productId || !authorName || !authorEmail || !rating || rating < 1 || rating > 5 || !comment?.trim()) {
+      res.status(400).json({ error: 'All fields are required, and rating must be between 1 and 5.' });
+      return;
+    }
+
+    const cleanEmail = authorEmail.toLowerCase().trim();
+
+    const customerDoc = await db.collection('verified_customers').doc(cleanEmail).get();
+
+    if (!customerDoc.exists) {
+      res.status(403).json({ 
+        error: 'No order found for this email address. Only verified buyers can submit a review.' 
+      });
+      return;
+    }
+
+    const existingReviewSnapshot = await db.collection('reviews')
+      .where('productId', '==', productId)
+      .where('authorEmail', '==', cleanEmail)
+      .limit(1)
+      .get();
+
+    if (!existingReviewSnapshot.empty) {
+      res.status(409).json({ 
+        error: 'You have already submitted a review for this product.' 
+      });
       return;
     }
 
     const reviewRef = await db.collection('reviews').add({
       productId,
-      authorName,
-      authorEmail: authorEmail ? authorEmail.toLowerCase().trim() : '', // Kisbetűsítve az egyezéshez
-      rating,
-      comment: comment || '',
-      verifiedPurchase: false,
+      authorName: authorName.trim(),
+      authorEmail: cleanEmail,
+      rating: Number(rating),
+      comment: comment.trim(),
+      verifiedPurchase: true,
       createdAt: FieldValue.serverTimestamp()
     });
 
     res.status(201).json({ success: true, id: reviewRef.id });
   } catch (error) {
-    console.error('Hiba az értékelés mentésekor:', error);
-    res.status(500).json({ error: 'Szerver hiba' });
+    console.error('Error saving review:', error);
+    res.status(500).json({ error: 'Internal server error.' });
   }
 });
 
-// 2. Értékelések lekérése egy konkrét termékhez
-app.get('/api/reviews/:productId', async (req: Request, res: Response) => {
+app.get('/api/reviews/:productId', async (req: Request, res: Response): Promise<void> => {
   try {
     const { productId } = req.params;
     
@@ -67,12 +89,16 @@ app.get('/api/reviews/:productId', async (req: Request, res: Response) => {
       const data = doc.data();
       return {
         id: doc.id,
-        ...data,
-        createdAt: data.createdAt?.toDate() || null
+        productId: data['productId'],
+        authorName: data['authorName'],
+        rating: data['rating'],
+        comment: data['comment'],
+        verifiedPurchase: data['verifiedPurchase'],
+        createdAt: data['createdAt']?.toDate() || null
       };
     });
 
-    // Memóriában rendezzük le csökkenő sorrendbe
+    // Rendezés csökkenő sorrendbe dátum szerint
     reviews.sort((a, b) => {
       const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
       const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
@@ -81,17 +107,17 @@ app.get('/api/reviews/:productId', async (req: Request, res: Response) => {
 
     res.json(reviews);
   } catch (error) {
-    console.error('Hiba az értékelések lekérésekor:', error);
-    res.status(500).json({ error: 'Szerver hiba' });
+    console.error('Error fetching reviews:', error);
+    res.status(500).json({ error: 'Internal server error.' });
   }
 });
 
 // 3. Fourthwall Webhook fogadása
-app.post('/api/webhooks/fourthwall', async (req: Request, res: Response) => {
+app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promise<void> => {
   try {
     const event = req.body;
 
-    console.log('Fourthwall Webhook érkezett:', event.type || 'Ismeretlen típus');
+    console.log('Fourthwall Webhook received:', event.type || 'Unknown type');
 
     if (event.type === 'order.created' || event.type === 'order.fulfilled') {
       const orderData = event.data;
@@ -99,29 +125,23 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response) => {
 
       if (rawEmail) {
         const customerEmail = rawEmail.toLowerCase().trim();
-        const reviewsRef = db.collection('reviews');
-        const snapshot = await reviewsRef.where('authorEmail', '==', customerEmail).get();
+        await db.collection('verified_customers').doc(customerEmail).set({
+          lastOrderAt: FieldValue.serverTimestamp(),
+          lastOrderId: orderData.id || null
+        }, { merge: true });
 
-        if (!snapshot.empty) {
-          const batch = db.batch();
-          snapshot.docs.forEach(doc => {
-            batch.update(doc.ref, { verifiedPurchase: true });
-          });
-
-          await batch.commit();
-          console.log(`Verified status frissítve a következő emailhez: ${customerEmail}`);
-        }
+        console.log(`Verified customer registered/updated: ${customerEmail}`);
       }
     }
 
     res.status(200).json({ received: true });
   } catch (error) {
-    console.error('Hiba a webhook feldolgozásakor:', error);
-    res.status(500).json({ error: 'Webhook hiba' });
+    console.error('Webhook processing error:', error);
+    res.status(500).json({ error: 'Webhook error.' });
   }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Backend fut a következő porton: ${PORT}`);
+  console.log(`Backend server running on port: ${PORT}`);
 });
