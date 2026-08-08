@@ -6,6 +6,7 @@ import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 
 dotenv.config();
 
+// Firebase Admin SDK inicializálása
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '{}');
 
 initializeApp({
@@ -26,6 +27,7 @@ interface ReviewBody {
   comment: string;
 }
 
+// 1. Új értékelés beküldése
 app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response): Promise<void> => {
   try {
     const { productId, authorName, authorEmail, rating, comment } = req.body;
@@ -37,29 +39,44 @@ app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response)
     }
 
     const cleanEmail = authorEmail.toLowerCase().trim();
+    console.log(`\n--- [REVIEW ATTEMPT] ---`);
+    console.log(`Email: ${cleanEmail} | ProductId: ${productId}`);
 
+    // A. Vásárlás ellenőrzése a verified_customers kollekcióban
     const customerDoc = await db.collection('verified_customers').doc(cleanEmail).get();
 
     if (!customerDoc.exists) {
+      console.log(`[REJECTED - 403] Customer not found in verified_customers: ${cleanEmail}`);
       res.status(403).json({ 
         error: 'No order found for this email address. Only verified buyers can submit a review.' 
       });
       return;
     }
 
-    const existingReviewSnapshot = await db.collection('reviews')
-      .where('productId', '==', productId)
-      .where('authorEmail', '==', cleanEmail)
-      .limit(1)
-      .get();
+    // B. Duplikáció ellenőrzése
+    let existingReviewSnapshot;
+    try {
+      existingReviewSnapshot = await db.collection('reviews')
+        .where('productId', '==', productId)
+        .where('authorEmail', '==', cleanEmail)
+        .limit(1)
+        .get();
+    } catch (indexError: any) {
+      console.error('[FIRESTORE INDEX ERROR] Composite index needed! Click the link below if provided in the error:');
+      console.error(indexError);
+      res.status(500).json({ error: 'Database index error. Check server logs.' });
+      return;
+    }
 
     if (!existingReviewSnapshot.empty) {
+      console.log(`[REJECTED - 409] Review already exists for email: ${cleanEmail} on product: ${productId}`);
       res.status(409).json({ 
         error: 'You have already submitted a review for this product.' 
       });
       return;
     }
 
+    // C. Értékelés mentése
     const reviewRef = await db.collection('reviews').add({
       productId,
       authorName: authorName.trim(),
@@ -70,6 +87,7 @@ app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response)
       createdAt: FieldValue.serverTimestamp()
     });
 
+    console.log(`[SUCCESS - 201] Review saved successfully with ID: ${reviewRef.id}`);
     res.status(201).json({ success: true, id: reviewRef.id });
   } catch (error) {
     console.error('Error saving review:', error);
@@ -77,6 +95,7 @@ app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response)
   }
 });
 
+// 2. Értékelések lekérése egy konkrét termékhez
 app.get('/api/reviews/:productId', async (req: Request, res: Response): Promise<void> => {
   try {
     const { productId } = req.params;
@@ -98,7 +117,6 @@ app.get('/api/reviews/:productId', async (req: Request, res: Response): Promise<
       };
     });
 
-    // Rendezés csökkenő sorrendbe dátum szerint
     reviews.sort((a, b) => {
       const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
       const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
@@ -125,6 +143,7 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
 
       if (rawEmail) {
         const customerEmail = rawEmail.toLowerCase().trim();
+
         await db.collection('verified_customers').doc(customerEmail).set({
           lastOrderAt: FieldValue.serverTimestamp(),
           lastOrderId: orderData.id || null
