@@ -32,34 +32,106 @@ const app = express();
 // --- 2. RESEND EMAIL CLIENT ---
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-// E-mail küldő segédfüggvény Resend API-val
+// E-mail küldő segédfüggvény prémium Nimbus Tales HTML sablonnal
 async function sendPurchaseThankYouEmail(toEmail: string, orderId?: string) {
-  console.log(`[EMAIL] Sending email via Resend API to: ${toEmail}...`);
+  console.log(`[EMAIL] Sending thank-you email via Resend API to: ${toEmail}...`);
+  
+  // Cseréld ki a logó URL-jét a saját tárhelyeden lévő képedre vagy logódra!
+  const studioLogoUrl = 'https://www.nimbus-tales.com/assets/logo.png'; 
+
+  const emailHtml = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Thank You from Nimbus Tales</title>
+    </head>
+    <body style="margin: 0; padding: 0; background-color: #030407; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; color: #f8f9fa;">
+      <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #030407; padding: 40px 10px;">
+        <tr>
+          <td align="center">
+            
+            <!-- Fő kártya konténer -->
+            <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 600px; background: linear-gradient(180deg, #090e1c 0%, #030407 100%); border: 1px solid #1a233a; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+              
+              <!-- Fejléc / Brand rész -->
+              <tr>
+                <td align="center" style="padding: 35px 20px 20px 20px; border-bottom: 1px solid rgba(207, 168, 86, 0.15);">
+                  <img src="${studioLogoUrl}" alt="Nimbus Tales" width="70" height="70" style="display: block; border-radius: 50%; border: 2px solid #cfa856; margin-bottom: 12px; object-fit: cover;" />
+                  <h1 style="color: #cfa856; font-size: 22px; margin: 0; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;">
+                    Nimbus Tales
+                  </h1>
+                </td>
+              </tr>
+
+              <!-- Főtörzs / Üzenet -->
+              <tr>
+                <td style="padding: 35px 30px; color: #f8f9fa; font-size: 15px; line-height: 1.7;">
+                  
+                  <p style="margin-top: 0; font-size: 18px; font-weight: 600; color: #ffffff;">
+                    Köszönjük a támogatásod! ✨
+                  </p>
+                  
+                  <p style="color: #c5cbd8; margin-bottom: 20px;">
+                    Reméljük, minden rendben volt a rendeléssel! Mivel a csomagod már úton van vagy megérkezett, nem is szaporítjuk tovább a szót – csak szerettük volna személyesen is megköszönni, hogy támogatod a <strong>Nimbus Tales</strong>-t.
+                  </p>
+
+                  <!-- Belső kártya az értékelésre buzdításhoz -->
+                  <div style="background-color: rgba(9, 14, 28, 0.7); border: 1px solid rgba(207, 168, 86, 0.2); border-radius: 12px; padding: 20px; margin: 25px 0; text-align: center;">
+                    <div style="font-size: 20px; margin-bottom: 8px;">⭐ ⭐ ⭐ ⭐ ⭐</div>
+                    <p style="margin: 0 0 15px 0; font-size: 14px; color: #f8f9fa; font-weight: 500;">
+                      Ha van egy szabad perced, nagyon hálásak lennénk, ha írnál egy rövid véleményt a termékről a webshopban!
+                    </p>
+                    
+                    <!-- CTA Gomb -->
+                    <table role="presentation" border="0" cellspacing="0" cellpadding="0" align="center" style="margin: 0 auto;">
+                      <tr>
+                        <td align="center" style="border-radius: 8px; background-color: #cfa856;">
+                          <a href="https://www.nimbus-tales.com" target="_blank" style="display: inline-block; padding: 12px 28px; font-size: 14px; color: #030407; font-weight: bold; text-decoration: none; border-radius: 8px; background-color: #cfa856;">
+                            Vélemény írása & Webshop
+                          </a>
+                        </td>
+                      </tr>
+                    </table>
+                  </div>
+
+                  ${orderId ? `<p style="font-size: 12px; color: #6c757d; text-align: center; margin-bottom: 0;">Rendelés azonosító: <span style="color: #cfa856;">#${orderId}</span></p>` : ''}
+
+                </td>
+              </tr>
+
+              <!-- Lábléc -->
+              <tr>
+                <td align="center" style="padding: 20px; background-color: rgba(0, 0, 0, 0.3); border-top: 1px solid #121929; font-size: 12px; color: #6c757d;">
+                  <p style="margin: 0 0 6px 0;">© ${new Date().getFullYear()} Nimbus Tales Studio. Minden jog fenntartva.</p>
+                  <p style="margin: 0;">
+                    <a href="https://www.nimbus-tales.com" style="color: #cfa856; text-decoration: none;">www.nimbus-tales.com</a>
+                  </p>
+                </td>
+              </tr>
+
+            </table>
+
+          </td>
+        </tr>
+      </table>
+    </body>
+    </html>
+  `;
+
   try {
     const data = await resend.emails.send({
-      // Ha a domain még nincs igazolva a Resendben, a teszteléshez használd az 'onboarding@resend.dev' feladót!
-      from: 'Nimbus Tales <onboarding@resend.dev>', 
+      from: 'Nimbus Tales <webshop@nimbus-tales.com>',
       to: [toEmail],
-      subject: 'Thank you for your order! - Nimbus Tales',
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333; line-height: 1.6;">
-          <h2 style="color: #1a1a1a;">Thank you for your purchase!</h2>
-          <p>Hi there,</p>
-          <p>We have successfully received your order. Thank you so much for supporting <strong>Nimbus Tales</strong>!</p>
-          ${orderId ? `<p>Order ID: <strong>${orderId}</strong></p>` : ''}
-          <p>As a verified customer, you can now leave a review on the product page. Feel free to share your thoughts and feedback with our community!</p>
-          <p>If you have any questions or issues regarding your order, simply reply to this email and we'll be happy to help.</p>
-          <br>
-          <hr style="border: none; border-top: 1px solid #eee;" />
-          <p style="font-size: 12px; color: #777;">Nimbus Tales Studio</p>
-        </div>
-      `,
+      subject: 'Köszönjük a vásárlást! - Nimbus Tales',
+      html: emailHtml,
     });
 
     if (data.error) {
       console.error(`[EMAIL ERROR] Resend returned an error:`, data.error);
     } else {
-      console.log(`[EMAIL SUCCESS] Resend email sent successfully! Message ID:`, data.data?.id);
+      console.log(`[EMAIL SUCCESS] Thank-you email sent successfully! ID:`, data.data?.id);
     }
   } catch (emailError) {
     console.error(`[EMAIL ERROR] Failed to send email via Resend to ${toEmail}:`, emailError);
