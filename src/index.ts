@@ -123,12 +123,16 @@ async function sendPurchaseThankYouEmail(toEmail: string, orderId?: string) {
     </html>
   `;
 
+  // Tiszta plain text verzió a spam szűrők elkerüléséhez
+  const emailText = `Thank you for supporting Nimbus Tales! Your order is currently being prepared. Manufacturing, fulfillment, and shipping are handled by Fourthwall. If you have any questions regarding your package, please reach out to Fourthwall Support. Once your order arrives, feel free to leave us a review at https://www.nimbus-tales.com ${orderId ? `(Order ID: #${orderId})` : ''}`;
+
   try {
     const data = await resend.emails.send({
       from: 'Nimbus Tales <webshop@nimbus-tales.com>',
       to: [toEmail],
       subject: 'Thank you for your purchase! - Nimbus Tales',
       html: emailHtml,
+      text: emailText,
     });
 
     if (data.error) {
