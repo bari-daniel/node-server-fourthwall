@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
+import nodemailer from 'nodemailer';
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 
@@ -28,28 +29,61 @@ initializeApp({
 const db = getFirestore();
 const app = express();
 
+// --- 2. NODEMAILER / RACKHOST SMTP KONFIGURÁCIÓ ---
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST || 'smtp.rackhost.hu',
+  port: Number(process.env.SMTP_PORT) || 465,
+  secure: process.env.SMTP_SECURE !== 'false', // true esetén SSL (465-ös port)
+  auth: {
+    user: process.env.SMTP_USER || 'webshop@nimbus-tales.com',
+    pass: process.env.SMTP_PASS,
+  },
+});
+
+// E-mail küldő segédfüggvény (nem-blokkoló try-catch kezeléssel)
+async function sendPurchaseThankYouEmail(toEmail: string, orderId?: string) {
+  try {
+    await transporter.sendMail({
+      from: `"Nimbus Tales" <${process.env.SMTP_USER || 'webshop@nimbus-tales.com'}>`,
+      to: toEmail,
+      subject: 'Thank you for your order! - Nimbus Tales',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333; line-height: 1.6;">
+          <h2 style="color: #1a1a1a;">Thank you for your purchase!</h2>
+          <p>Hi there,</p>
+          <p>We have successfully received your order. Thank you so much for supporting <strong>Nimbus Tales</strong>!</p>
+          ${orderId ? `<p>Order ID: <strong>${orderId}</strong></p>` : ''}
+          <p>As a verified customer, you can now leave a review on the product page. Feel free to share your thoughts and feedback with our community!</p>
+          <p>If you have any questions or issues regarding your order, simply reply to this email and we'll be happy to help.</p>
+          <br>
+          <hr style="border: none; border-top: 1px solid #eee;" />
+          <p style="font-size: 12px; color: #777;">Nimbus Tales Studio</p>
+        </div>
+      `,
+    });
+    console.log(`[EMAIL SUCCESS] Thank you email successfully sent to: ${toEmail}`);
+  } catch (emailError) {
+    console.error(`[EMAIL ERROR] Failed to send email to ${toEmail}:`, emailError);
+  }
+}
+
 // Globális CORS opciók
 const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
-    // Engedélyezzük, ha nincs origin (pl. szerver-szerver hívás, Postman)
-    // vagy ha az engedélyezett listában szerepel
     if (!origin || allowedOrigins.includes(origin) || allowedOrigins.length === 0) {
       callback(null, true);
     } else {
-      // Hiba helyett false-szal térünk vissza, így a CORS middleware kezeli le tisztán
       callback(null, false);
     }
   },
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   credentials: true,
-  optionsSuccessStatus: 200 // Régebbi böngészők és proxyk támogatásához (204 helyett 200)
+  optionsSuccessStatus: 200
 };
 
-// CORS middleware alkalmazása globálisan
 app.use(cors(corsOptions));
 
-// Nyers test (rawBody) megtartása a Base64 HMAC aláírás ellenőrzéséhez
 app.use(express.json({
   verify: (req: any, res, buf) => {
     req.rawBody = buf;
@@ -273,6 +307,9 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
       }
 
       await batch.commit();
+
+      // --- AUTOMATIKUS E-MAIL KÜLDÉSE VÁSÁRLÁS UTÁN ---
+      sendPurchaseThankYouEmail(customerEmail, payload.data?.id);
     }
 
     console.log(`[WEBHOOK SUCCESS] Registered ${customerEmail} | Products:`, uniqueProductIds);
