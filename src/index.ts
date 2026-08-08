@@ -22,6 +22,7 @@ app.use(express.json());
 interface ReviewBody {
   productId: string;
   authorName: string;
+  authorEmail?: string; // Hozzáadva a webhook azonosításhoz
   rating: number;
   comment: string;
 }
@@ -29,7 +30,7 @@ interface ReviewBody {
 // 1. Új értékelés beküldése
 app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response) => {
   try {
-    const { productId, authorName, rating, comment } = req.body;
+    const { productId, authorName, authorEmail, rating, comment } = req.body;
 
     if (!productId || !authorName || !rating || rating < 1 || rating > 5) {
       res.status(400).json({ error: 'Érvénytelen adatok' });
@@ -39,6 +40,7 @@ app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response)
     const reviewRef = await db.collection('reviews').add({
       productId,
       authorName,
+      authorEmail: authorEmail ? authorEmail.toLowerCase().trim() : '', // Kisbetűsítve az egyezéshez
       rating,
       comment: comment || '',
       verifiedPurchase: false,
@@ -57,7 +59,6 @@ app.get('/api/reviews/:productId', async (req: Request, res: Response) => {
   try {
     const { productId } = req.params;
     
-    // Csak a productId-ra szűrünk (nem kell Firestore index!)
     const snapshot = await db.collection('reviews')
       .where('productId', '==', productId)
       .get();
@@ -71,7 +72,7 @@ app.get('/api/reviews/:productId', async (req: Request, res: Response) => {
       };
     });
 
-    // Memóriában rendezzük le csökkenő sorrendbe (legfrissebb elől)
+    // Memóriában rendezzük le csökkenő sorrendbe
     reviews.sort((a, b) => {
       const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
       const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
@@ -82,6 +83,41 @@ app.get('/api/reviews/:productId', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Hiba az értékelések lekérésekor:', error);
     res.status(500).json({ error: 'Szerver hiba' });
+  }
+});
+
+// 3. Fourthwall Webhook fogadása
+app.post('/api/webhooks/fourthwall', async (req: Request, res: Response) => {
+  try {
+    const event = req.body;
+
+    console.log('Fourthwall Webhook érkezett:', event.type || 'Ismeretlen típus');
+
+    if (event.type === 'order.created' || event.type === 'order.fulfilled') {
+      const orderData = event.data;
+      const rawEmail = orderData?.email || orderData?.customer?.email;
+
+      if (rawEmail) {
+        const customerEmail = rawEmail.toLowerCase().trim();
+        const reviewsRef = db.collection('reviews');
+        const snapshot = await reviewsRef.where('authorEmail', '==', customerEmail).get();
+
+        if (!snapshot.empty) {
+          const batch = db.batch();
+          snapshot.docs.forEach(doc => {
+            batch.update(doc.ref, { verifiedPurchase: true });
+          });
+
+          await batch.commit();
+          console.log(`Verified status frissítve a következő emailhez: ${customerEmail}`);
+        }
+      }
+    }
+
+    res.status(200).json({ received: true });
+  } catch (error) {
+    console.error('Hiba a webhook feldolgozásakor:', error);
+    res.status(500).json({ error: 'Webhook hiba' });
   }
 });
 
