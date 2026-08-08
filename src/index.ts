@@ -56,16 +56,27 @@ app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response)
 app.get('/api/reviews/:productId', async (req: Request, res: Response) => {
   try {
     const { productId } = req.params;
+    
+    // Csak a productId-ra szűrünk (nem kell Firestore index!)
     const snapshot = await db.collection('reviews')
       .where('productId', '==', productId)
-      .orderBy('createdAt', 'desc')
       .get();
 
-    const reviews = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-      createdAt: doc.data().createdAt?.toDate() || null
-    }));
+    const reviews = snapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        ...data,
+        createdAt: data.createdAt?.toDate() || null
+      };
+    });
+
+    // Memóriában rendezzük le csökkenő sorrendbe (legfrissebb elől)
+    reviews.sort((a, b) => {
+      const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return dateB - dateA;
+    });
 
     res.json(reviews);
   } catch (error) {
