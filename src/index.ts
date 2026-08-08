@@ -28,18 +28,27 @@ initializeApp({
 const db = getFirestore();
 const app = express();
 
-// CORS middleware dynamic origin ellenőrzéssel
-const corsMiddleware = cors({
+// Globális CORS opciók preflight (OPTIONS) támogatással
+const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
-    // Engedélyezzük, ha nincs origin (pl. szerver-szerver hívás, Postman) 
+    // Engedélyezzük, ha nincs origin (pl. szerver-szerver hívás, Postman)
     // vagy ha az engedélyezett listában szerepel
     if (!origin || allowedOrigins.includes(origin) || allowedOrigins.length === 0) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
     }
-  }
-});
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
+};
+
+// CORS middleware alkalmazása globálisan az összes route előtt
+app.use(cors(corsOptions));
+
+// Preflight kérések globális kezelelése
+app.options('*', cors(corsOptions));
 
 // Nyers test (rawBody) megtartása a Base64 HMAC aláírás ellenőrzéséhez
 app.use(express.json({
@@ -65,8 +74,8 @@ interface ReviewBody {
   comment: string;
 }
 
-// 1. Review beküldése (CORS-al védett API, Atomikus Tranzakció + Zéro-Fallback)
-app.post('/api/reviews', corsMiddleware, async (req: Request<{}, {}, ReviewBody>, res: Response): Promise<void> => {
+// 1. Review beküldése (Atomikus Tranzakció + Zéro-Fallback)
+app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response): Promise<void> => {
   try {
     const { productId, authorName, authorEmail, rating, comment } = req.body;
 
@@ -138,8 +147,8 @@ app.post('/api/reviews', corsMiddleware, async (req: Request<{}, {}, ReviewBody>
   }
 });
 
-// 2. Értékelések lekérése (CORS-al védett API)
-app.get('/api/reviews/:productId', corsMiddleware, async (req: Request, res: Response): Promise<void> => {
+// 2. Értékelések lekérése
+app.get('/api/reviews/:productId', async (req: Request, res: Response): Promise<void> => {
   try {
     const { productId } = req.params;
     
