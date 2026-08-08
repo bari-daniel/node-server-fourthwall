@@ -37,6 +37,8 @@ async function sendPurchaseThankYouEmail(toEmail: string, orderId?: string) {
   console.log(`[EMAIL] Sending thank-you email via Resend API to: ${toEmail}...`);
   
   const studioLogoUrl = 'https://www.nimbus-tales.com/images/nimbusTales.png'; 
+  const fourthwallSupportUrl = 'https://nimbus-tales-studio-shop.fourthwall.com/contact/order-placed/variants';
+  const shopReviewUrl = 'https://www.nimbus-tales.com/webshop';
 
   const emailHtml = `
     <!DOCTYPE html>
@@ -77,7 +79,7 @@ async function sendPurchaseThankYouEmail(toEmail: string, orderId?: string) {
                   </p>
 
                   <p style="color: #c5cbd8; margin-bottom: 20px;">
-                    Please note that manufacturing, fulfillment, and shipping are entirely handled by <strong>Fourthwall</strong>. If you have any questions regarding your package, tracking, or order support, please reach out directly to <a href="https://support.fourthwall.com" target="_blank" style="color: #cfa856; text-decoration: underline;">Fourthwall Support</a> or reply to your original Fourthwall confirmation email.
+                    Please note that manufacturing, fulfillment, and shipping are entirely handled by <strong>Fourthwall</strong>. If you have any questions regarding your package, tracking, or order support, please reach out directly to <a href="${fourthwallSupportUrl}" target="_blank" style="color: #cfa856; text-decoration: underline;">Fourthwall Support</a> or reply to your original Fourthwall confirmation email.
                   </p>
 
                   <!-- Inner Review Card -->
@@ -91,7 +93,7 @@ async function sendPurchaseThankYouEmail(toEmail: string, orderId?: string) {
                     <table role="presentation" border="0" cellspacing="0" cellpadding="0" align="center" style="margin: 0 auto;">
                       <tr>
                         <td align="center" style="border-radius: 8px; background-color: #cfa856;">
-                          <a href="https://www.nimbus-tales.com" target="_blank" style="display: inline-block; padding: 12px 28px; font-size: 14px; color: #030407; font-weight: bold; text-decoration: none; border-radius: 8px; background-color: #cfa856;">
+                          <a href="${shopReviewUrl}" target="_blank" style="display: inline-block; padding: 12px 28px; font-size: 14px; color: #030407; font-weight: bold; text-decoration: none; border-radius: 8px; background-color: #cfa856;">
                             Leave a Review & Visit Shop
                           </a>
                         </td>
@@ -109,7 +111,7 @@ async function sendPurchaseThankYouEmail(toEmail: string, orderId?: string) {
                 <td align="center" style="padding: 20px; background-color: rgba(0, 0, 0, 0.3); border-top: 1px solid #121929; font-size: 12px; color: #6c757d;">
                   <p style="margin: 0 0 6px 0;">© ${new Date().getFullYear()} Nimbus Tales Studio. All rights reserved.</p>
                   <p style="margin: 0;">
-                    <a href="https://www.nimbus-tales.com" style="color: #cfa856; text-decoration: none;">www.nimbus-tales.com</a>
+                    <a href="${shopReviewUrl}" style="color: #cfa856; text-decoration: none;">www.nimbus-tales.com/webshop</a>
                   </p>
                 </td>
               </tr>
@@ -124,7 +126,7 @@ async function sendPurchaseThankYouEmail(toEmail: string, orderId?: string) {
   `;
 
   // Tiszta plain text verzió a spam szűrők elkerüléséhez
-  const emailText = `Thank you for supporting Nimbus Tales! Your order is currently being prepared. Manufacturing, fulfillment, and shipping are handled by Fourthwall. If you have any questions regarding your package, please reach out to Fourthwall Support. Once your order arrives, feel free to leave us a review at https://www.nimbus-tales.com ${orderId ? `(Order ID: #${orderId})` : ''}`;
+  const emailText = `Thank you for supporting Nimbus Tales! Your order is currently being prepared. Manufacturing, fulfillment, and shipping are handled by Fourthwall. If you have any questions regarding your package, please reach out to Fourthwall Support at ${fourthwallSupportUrl}. Once your order arrives, feel free to leave us a review at ${shopReviewUrl} ${orderId ? `(Order ID: #${orderId})` : ''}`;
 
   try {
     const data = await resend.emails.send({
