@@ -19,6 +19,15 @@ const app = express();
 app.use(cors({ origin: true }));
 app.use(express.json());
 
+// 0. Healthcheck & Root Endpointok (UptimeRobot pingeléshez és ébrentartáshoz)
+app.get('/', (req: Request, res: Response): void => {
+  res.status(200).send('Server is alive and running!');
+});
+
+app.get('/health', (req: Request, res: Response): void => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 interface ReviewBody {
   productId: string;
   authorName: string;
