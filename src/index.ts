@@ -40,7 +40,7 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-// E-mail küldő segédfüggvény (nem-blokkoló try-catch kezeléssel)
+// E-mail küldő segédfüggvény
 async function sendPurchaseThankYouEmail(toEmail: string, orderId?: string) {
   try {
     await transporter.sendMail({
@@ -308,8 +308,8 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
 
       await batch.commit();
 
-      // --- AUTOMATIKUS E-MAIL KÜLDÉSE VÁSÁRLÁS UTÁN ---
-      sendPurchaseThankYouEmail(customerEmail, payload.data?.id);
+      // Bevárjuk az e-mail kiküldését a válasz visszaküldése előtt
+      await sendPurchaseThankYouEmail(customerEmail, payload.data?.id);
     }
 
     console.log(`[WEBHOOK SUCCESS] Registered ${customerEmail} | Products:`, uniqueProductIds);
