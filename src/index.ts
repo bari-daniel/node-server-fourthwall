@@ -29,22 +29,26 @@ initializeApp({
 const db = getFirestore();
 const app = express();
 
-// --- 2. NODEMAILER / RACKHOST SMTP KONFIGURÁCIÓ ---
+// --- 2. NODEMAILER / RACKHOST SMTP KONFIGURÁCIÓ (STARTTLS - Port 587) ---
+const isSecure = process.env.SMTP_SECURE === 'true';
+
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || 'smtp.rackhost.hu',
-  port: Number(process.env.SMTP_PORT) || 465,
-  secure: process.env.SMTP_SECURE !== 'false', // true esetén SSL (465-ös port)
+  port: Number(process.env.SMTP_PORT) || 587,
+  secure: isSecure, // 587-es portnál ez false legyen!
+  requireTLS: !isSecure, // Kikényszeríti a STARTTLS titkosítást 587-es porton
   auth: {
     user: process.env.SMTP_USER || 'webshop@nimbus-tales.com',
     pass: process.env.SMTP_PASS,
   },
+  connectionTimeout: 10000,
 });
 
 // E-mail küldő segédfüggvény diagnosztikai logokkal
 async function sendPurchaseThankYouEmail(toEmail: string, orderId?: string) {
   console.log('[EMAIL] SMTP config:', {
     host: process.env.SMTP_HOST || 'smtp.rackhost.hu',
-    port: process.env.SMTP_PORT || 465,
+    port: process.env.SMTP_PORT || 587,
     secure: process.env.SMTP_SECURE,
     user: process.env.SMTP_USER || 'webshop@nimbus-tales.com',
     hasPass: !!process.env.SMTP_PASS
@@ -316,7 +320,6 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
 
       await batch.commit();
 
-      // Diagnosztikai logok az e-mail küldés körül
       console.log('[EMAIL] Starting thank-you email:', customerEmail);
       await sendPurchaseThankYouEmail(customerEmail, payload.data?.id);
       console.log('[EMAIL] Thank-you email function finished');
