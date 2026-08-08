@@ -37,7 +37,7 @@ async function sendPurchaseThankYouEmail(toEmail: string, orderId?: string) {
   console.log(`[EMAIL] Sending thank-you email via Resend API to: ${toEmail}...`);
   
   // Cseréld ki a logó URL-jét a saját tárhelyeden lévő képedre vagy logódra!
-  const studioLogoUrl = 'https://www.nimbus-tales.com/assets/logo.png'; 
+  const studioLogoUrl = 'https://www.nimbus-tales.com/images/nimbusTales.png'; 
 
   const emailHtml = `
     <!DOCTYPE html>
