@@ -39,8 +39,7 @@ app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response)
     }
 
     const cleanEmail = authorEmail.toLowerCase().trim();
-    console.log(`\n--- [REVIEW ATTEMPT] ---`);
-    console.log(`Email: ${cleanEmail} | ProductId: ${productId}`);
+    console.log(`\n--- [REVIEW ATTEMPT] --- Email: ${cleanEmail} | ProductId: ${productId}`);
 
     // A. Vásárlás ellenőrzése a verified_customers kollekcióban
     const customerDoc = await db.collection('verified_customers').doc(cleanEmail).get();
@@ -62,14 +61,13 @@ app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response)
         .limit(1)
         .get();
     } catch (indexError: any) {
-      console.error('[FIRESTORE INDEX ERROR] Composite index needed! Click the link below if provided in the error:');
-      console.error(indexError);
+      console.error('[FIRESTORE INDEX ERROR] Composite index needed:', indexError);
       res.status(500).json({ error: 'Database index error. Check server logs.' });
       return;
     }
 
     if (!existingReviewSnapshot.empty) {
-      console.log(`[REJECTED - 409] Review already exists for email: ${cleanEmail} on product: ${productId}`);
+      console.log(`[REJECTED - 409] Review already exists for email: ${cleanEmail}`);
       res.status(409).json({ 
         error: 'You have already submitted a review for this product.' 
       });
@@ -130,37 +128,45 @@ app.get('/api/reviews/:productId', async (req: Request, res: Response): Promise<
   }
 });
 
-// 3. Fourthwall Webhook fogadása
+// 3. Fourthwall Webhook (Továbbfejlesztett, mély e-mail keresővel)
 app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promise<void> => {
   try {
-    const event = req.body;
+    const payload = req.body;
 
-    console.log('Fourthwall Webhook received:', event.type || 'Unknown type');
+    console.log('\n--- [FOURTHWALL WEBHOOK INCOMING] ---');
+    console.log('Event Type:', payload.type || payload.event || payload.topic || 'Direct Payload');
 
-    if (event.type === 'order.created' || event.type === 'order.fulfilled') {
-      const orderData = event.data;
-      const rawEmail = orderData?.email || orderData?.customer?.email;
+    // Keressük meg az e-mailt a Fourthwall mély struktúráiban
+    const rawEmail = 
+      payload.data?.email || 
+      payload.data?.customer?.email || 
+      payload.email || 
+      payload.customer?.email || 
+      payload.order?.email ||
+      payload.order?.customer?.email;
 
-      if (rawEmail) {
-        const customerEmail = rawEmail.toLowerCase().trim();
+    if (rawEmail) {
+      const customerEmail = rawEmail.toLowerCase().trim();
 
-        await db.collection('verified_customers').doc(customerEmail).set({
-          lastOrderAt: FieldValue.serverTimestamp(),
-          lastOrderId: orderData.id || null
-        }, { merge: true });
+      await db.collection('verified_customers').doc(customerEmail).set({
+        lastOrderAt: FieldValue.serverTimestamp(),
+        lastOrderId: payload.data?.id || payload.order?.id || payload.id || null
+      }, { merge: true });
 
-        console.log(`Verified customer registered/updated: ${customerEmail}`);
-      }
+      console.log(`[WEBHOOK SUCCESS] Verified customer registered: ${customerEmail}`);
+      res.status(200).json({ received: true, email: customerEmail });
+      return;
     }
 
-    res.status(200).json({ received: true });
+    console.log('[WEBHOOK WARNING] Webhook arrived, but no email field was extracted.');
+    res.status(200).json({ received: true, warning: 'No email found in payload' });
   } catch (error) {
-    console.error('Webhook processing error:', error);
-    res.status(500).json({ error: 'Webhook error.' });
+    console.error('[WEBHOOK ERROR]:', error);
+    res.status(500).json({ error: 'Webhook processing error' });
   }
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Backend server running on port: ${PORT}`);
 });
