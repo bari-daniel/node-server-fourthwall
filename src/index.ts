@@ -28,7 +28,7 @@ initializeApp({
 const db = getFirestore();
 const app = express();
 
-// Globális CORS opciók preflight (OPTIONS) támogatással
+// Globális CORS opciók
 const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
     // Engedélyezzük, ha nincs origin (pl. szerver-szerver hívás, Postman)
@@ -36,19 +36,18 @@ const corsOptions: cors.CorsOptions = {
     if (!origin || allowedOrigins.includes(origin) || allowedOrigins.length === 0) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      // Hiba helyett false-szal térünk vissza, így a CORS middleware kezeli le tisztán
+      callback(null, false);
     }
   },
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  credentials: true,
+  optionsSuccessStatus: 200 // Régebbi böngészők és proxyk támogatásához (204 helyett 200)
 };
 
-// CORS middleware alkalmazása globálisan az összes route előtt
+// CORS middleware alkalmazása globálisan
 app.use(cors(corsOptions));
-
-// Preflight kérések globális kezelelése
-app.options('*', cors(corsOptions));
 
 // Nyers test (rawBody) megtartása a Base64 HMAC aláírás ellenőrzéséhez
 app.use(express.json({
@@ -74,7 +73,7 @@ interface ReviewBody {
   comment: string;
 }
 
-// 1. Review beküldése (Atomikus Tranzakció + Zéro-Fallback)
+// 1. Review beküldése
 app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response): Promise<void> => {
   try {
     const { productId, authorName, authorEmail, rating, comment } = req.body;
@@ -91,7 +90,6 @@ app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response)
     const customerRef = db.collection('verified_customers').doc(cleanEmail);
     const reviewRef = db.collection('reviews').doc(customReviewId);
 
-    // Atomikus Firestore Tranzakció
     await db.runTransaction(async (transaction) => {
       const customerDoc = await transaction.get(customerRef);
 
@@ -102,18 +100,15 @@ app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response)
       const customerData = customerDoc.data();
       const purchasedProducts: string[] = customerData?.purchasedProducts || [];
 
-      // Szigorú ellenőrzés: ha a kanonikus offer.id nincs a tömbben, elutasítjuk
       if (!purchasedProducts.includes(cleanProductId)) {
         throw new Error('PRODUCT_NOT_PURCHASED');
       }
 
-      // Duplikáció ellenőrzése
       const reviewDoc = await transaction.get(reviewRef);
       if (reviewDoc.exists) {
         throw new Error('REVIEW_ALREADY_EXISTS');
       }
 
-      // Mentés
       transaction.set(reviewRef, {
         productId: cleanProductId,
         authorName: authorName.trim(),
@@ -182,12 +177,11 @@ app.get('/api/reviews/:productId', async (req: Request, res: Response): Promise<
   }
 });
 
-// 3. Fourthwall Webhook Handler (CORS-mentes, Hiba-biztos Idempotenciával)
+// 3. Fourthwall Webhook Handler
 app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promise<void> => {
   try {
     const webhookSecret = process.env.FOURTHWALL_WEBHOOK_SECRET;
 
-    // A. HMAC-SHA256 Base64 ellenőrzés
     if (webhookSecret) {
       const signatureHeader = (
         req.headers['x-fourthwall-hmac-sha256'] || 
@@ -227,7 +221,6 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
     const payload = req.body;
     const eventId = payload.id;
 
-    // B. Idempotencia ellenőrzés (Létezik-e már sikeresen feldolgozott event?)
     if (eventId) {
       const processedDoc = await db.collection('processed_webhooks').doc(eventId).get();
       if (processedDoc.exists) {
@@ -237,14 +230,12 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
       }
     }
 
-    // C. KIZÁRÓLAG ORDER_PLACED esemény feldolgozása
     const eventType = (payload.type || payload.event || '').toUpperCase();
     if (eventType !== 'ORDER_PLACED') {
       res.status(200).json({ received: true, note: `Event type ${eventType || 'UNKNOWN'} ignored` });
       return;
     }
 
-    // D. E-mail kinyerése
     const rawEmail = payload.data?.email || payload.data?.customer?.email;
     if (!rawEmail) {
       res.status(200).json({ received: true, warning: 'No email found in payload' });
@@ -254,7 +245,6 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
     const customerEmail = rawEmail.toLowerCase().trim();
     const customerRef = db.collection('verified_customers').doc(customerEmail);
 
-    // E. Kanonikus offer.id kinyerése (data.offers[])
     const offers = payload.data?.offers || [];
     
     const uniqueProductIds: string[] = Array.from(
@@ -265,18 +255,15 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
       )
     );
 
-    // F. Vásárlás elmentése + Atomikus Idempotencia rögzítés
     if (uniqueProductIds.length > 0) {
       const batch = db.batch();
 
-      // Vásárló frissítése
       batch.set(customerRef, {
         lastOrderAt: FieldValue.serverTimestamp(),
         lastOrderId: payload.data?.id || null,
         purchasedProducts: FieldValue.arrayUnion(...uniqueProductIds)
       }, { merge: true });
 
-      // Event ID megjelölése feldolgozottként (csak ha a mentés is sikeres)
       if (eventId) {
         const webhookRef = db.collection('processed_webhooks').doc(eventId);
         batch.set(webhookRef, {
