@@ -32,13 +32,21 @@ const app = express();
 // --- 2. RESEND EMAIL CLIENT ---
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-// E-mail küldő segédfüggvény prémium Nimbus Tales HTML sablonnal
-async function sendPurchaseThankYouEmail(toEmail: string, orderId?: string) {
+// E-mail küldő segédfüggvény vásárlás utáni köszönőlevélhez (Dinamikus support URL-lel)
+async function sendPurchaseThankYouEmail(
+  toEmail: string, 
+  customerName?: string, 
+  orderId?: string,
+  customSupportUrl?: string
+) {
   console.log(`[EMAIL] Sending thank-you email via Resend API to: ${toEmail}...`);
   
   const studioLogoUrl = 'https://www.nimbus-tales.com/images/nimbusTales.png'; 
-  const fourthwallSupportUrl = 'https://nimbus-tales-studio-shop.fourthwall.com/contact/something-else';
+  // Dinamikus support URL, vagy fallback a general contact-ra
+  const fourthwallSupportUrl = customSupportUrl || 'https://nimbus-tales-studio-shop.fourthwall.com/contact/something-else';
   const shopReviewUrl = 'https://www.nimbus-tales.com/webshop';
+
+  const greetingName = customerName?.trim() || 'there';
 
   const emailHtml = `
     <!DOCTYPE html>
@@ -71,7 +79,7 @@ async function sendPurchaseThankYouEmail(toEmail: string, orderId?: string) {
                 <td style="padding: 35px 30px; color: #f8f9fa; font-size: 15px; line-height: 1.7;">
                   
                   <p style="margin-top: 0; font-size: 18px; font-weight: 600; color: #ffffff;">
-                    Thank you for your support! ✨
+                    Thank you for your support, ${greetingName}! ✨
                   </p>
                   
                   <p style="color: #c5cbd8; margin-bottom: 16px;">
@@ -79,7 +87,7 @@ async function sendPurchaseThankYouEmail(toEmail: string, orderId?: string) {
                   </p>
 
                   <p style="color: #c5cbd8; margin-bottom: 20px;">
-                    Please note that manufacturing, fulfillment, and shipping are entirely handled by <strong>Fourthwall</strong>. If you have any questions regarding your package, tracking, or order support, please reach out directly to <a href="${fourthwallSupportUrl}" target="_blank" style="color: #cfa856; text-decoration: underline;">Fourthwall Support</a> or reply to your original Fourthwall confirmation email.
+                    Please note that manufacturing, fulfillment, and shipping are entirely handled by <strong>Fourthwall</strong>. If you have any questions regarding your package, tracking, or order support, please reach out directly to <a href="${fourthwallSupportUrl}" target="_blank" style="color: #cfa856; text-decoration: underline;">Fourthwall Order Support</a> or reply to your original Fourthwall confirmation email.
                   </p>
 
                   <!-- Inner Review Card -->
@@ -125,8 +133,7 @@ async function sendPurchaseThankYouEmail(toEmail: string, orderId?: string) {
     </html>
   `;
 
-  // Tiszta plain text verzió a spam szűrők elkerüléséhez
-  const emailText = `Thank you for supporting Nimbus Tales! Your order is currently being prepared. Manufacturing, fulfillment, and shipping are handled by Fourthwall. If you have any questions regarding your package, please reach out to Fourthwall Support at ${fourthwallSupportUrl}. Once your order arrives, feel free to leave us a review at ${shopReviewUrl} ${orderId ? `(Order ID: #${orderId})` : ''}`;
+  const emailText = `Thank you for supporting Nimbus Tales, ${greetingName}! Your order is currently being prepared. Manufacturing, fulfillment, and shipping are handled by Fourthwall. If you have any questions regarding your package, please reach out to Fourthwall Support at ${fourthwallSupportUrl}. Once your order arrives, feel free to leave us a review at ${shopReviewUrl} ${orderId ? `(Order ID: #${orderId})` : ''}`;
 
   try {
     const data = await resend.emails.send({
@@ -144,6 +151,114 @@ async function sendPurchaseThankYouEmail(toEmail: string, orderId?: string) {
     }
   } catch (emailError) {
     console.error(`[EMAIL ERROR] Failed to send email via Resend to ${toEmail}:`, emailError);
+  }
+}
+
+// E-mail küldő segédfüggvény értékelés beküldése után
+async function sendReviewFollowUpEmail(toEmail: string, authorName: string, rating: number) {
+  console.log(`[REVIEW EMAIL] Sending follow-up email for ${rating}-star review to: ${toEmail}...`);
+
+  const studioLogoUrl = 'https://www.nimbus-tales.com/images/nimbusTales.png';
+  const fourthwallSupportUrl = 'https://nimbus-tales-studio-shop.fourthwall.com/contact/something-else';
+  const shopReviewUrl = 'https://www.nimbus-tales.com/webshop';
+
+  const isPositive = rating > 3;
+
+  const subject = isPositive 
+    ? 'Thank you for your wonderful review! - Nimbus Tales' 
+    : 'We appreciate your feedback - Nimbus Tales';
+
+  const titleText = isPositive 
+    ? `Thank you for your review, ${authorName}! ✨` 
+    : `Thank you for your feedback, ${authorName}`;
+
+  const bodyContentHtml = isPositive 
+    ? `<p style="color: #c5cbd8; margin-bottom: 16px;">
+        We really appreciate you taking the time to share your experience with <strong>Nimbus Tales</strong>! Your support means the world to our team.
+       </p>`
+    : `<p style="color: #c5cbd8; margin-bottom: 16px;">
+        We noticed that your experience wasn't completely seamless. We are truly sorry to hear that and would love to learn more about what went wrong.
+       </p>
+       <p style="color: #c5cbd8; margin-bottom: 20px;">
+        Could you please reply to this email or reach out to us directly to let us know what you found unsatisfactory? We would love to know how we can improve and how we can make things right for you!
+       </p>
+       <div style="text-align: center; margin: 25px 0;">
+         <a href="${fourthwallSupportUrl}" target="_blank" style="display: inline-block; padding: 12px 28px; font-size: 14px; color: #030407; font-weight: bold; text-decoration: none; border-radius: 8px; background-color: #cfa856;">
+           Contact Support
+         </a>
+       </div>`;
+
+  const emailHtml = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>${subject}</title>
+    </head>
+    <body style="margin: 0; padding: 0; background-color: #030407; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #f8f9fa;">
+      <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #030407; padding: 40px 10px;">
+        <tr>
+          <td align="center">
+            <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 600px; background: linear-gradient(180deg, #090e1c 0%, #030407 100%); border: 1px solid #1a233a; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+              
+              <tr>
+                <td align="center" style="padding: 35px 20px 20px 20px; border-bottom: 1px solid rgba(207, 168, 86, 0.15);">
+                  <img src="${studioLogoUrl}" alt="Nimbus Tales" width="110" style="display: block; width: 110px; height: auto; border: 0; outline: none; margin-bottom: 12px;" />
+                  <h1 style="color: #cfa856; font-size: 22px; margin: 0; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;">
+                    Nimbus Tales
+                  </h1>
+                </td>
+              </tr>
+
+              <tr>
+                <td style="padding: 35px 30px; color: #f8f9fa; font-size: 15px; line-height: 1.7;">
+                  <p style="margin-top: 0; font-size: 18px; font-weight: 600; color: #ffffff;">
+                    ${titleText}
+                  </p>
+                  
+                  ${bodyContentHtml}
+
+                </td>
+              </tr>
+
+              <tr>
+                <td align="center" style="padding: 20px; background-color: rgba(0, 0, 0, 0.3); border-top: 1px solid #121929; font-size: 12px; color: #6c757d;">
+                  <p style="margin: 0 0 6px 0;">© ${new Date().getFullYear()} Nimbus Tales Studio. All rights reserved.</p>
+                  <p style="margin: 0;">
+                    <a href="${shopReviewUrl}" style="color: #cfa856; text-decoration: none;">www.nimbus-tales.com/webshop</a>
+                  </p>
+                </td>
+              </tr>
+
+            </table>
+          </td>
+        </tr>
+      </table>
+    </body>
+    </html>
+  `;
+
+  const emailText = isPositive
+    ? `Thank you for your review, ${authorName}! We really appreciate you taking the time to share your experience with Nimbus Tales!`
+    : `Thank you for your feedback, ${authorName}. We noticed that your experience wasn't completely seamless. Could you please let us know what you found unsatisfactory and how we can help make things right? Support: ${fourthwallSupportUrl}`;
+
+  try {
+    const data = await resend.emails.send({
+      from: 'Nimbus Tales <webshop@nimbus-tales.com>',
+      to: [toEmail],
+      subject: subject,
+      html: emailHtml,
+      text: emailText,
+    });
+
+    if (data.error) {
+      console.error(`[REVIEW EMAIL ERROR] Resend returned an error:`, data.error);
+    } else {
+      console.log(`[REVIEW EMAIL SUCCESS] Email sent successfully! ID:`, data.data?.id);
+    }
+  } catch (emailError) {
+    console.error(`[REVIEW EMAIL ERROR] Failed to send email via Resend to ${toEmail}:`, emailError);
   }
 }
 
@@ -235,6 +350,10 @@ app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response)
     });
 
     console.log(`[SUCCESS - 201] Review saved successfully with ID: ${customReviewId}`);
+
+    // Utókövető e-mail kiküldése aszinkron módon az értékelőnek (nem blokkolja a választ)
+    sendReviewFollowUpEmail(cleanEmail, authorName.trim(), Number(rating));
+
     res.status(201).json({ success: true, id: customReviewId });
 
   } catch (error: any) {
@@ -357,6 +476,7 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
     }
 
     const customerEmail = rawEmail.toLowerCase().trim();
+    const customerName = payload.data?.customer?.firstName || payload.data?.shippingAddress?.firstName || '';
     const customerRef = db.collection('verified_customers').doc(customerEmail);
 
     const offers = payload.data?.offers || [];
@@ -368,6 +488,16 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
           .filter((id: any): id is string => typeof id === 'string' && id.length > 0)
       )
     );
+
+    // Dinamikus support URL keresése a megrendelt termékekből
+    let customSupportUrl: string | undefined = undefined;
+    const firstOffer = offers[0];
+    
+    if (firstOffer?.url) {
+      customSupportUrl = firstOffer.url;
+    } else if (firstOffer?.slug) {
+      customSupportUrl = `https://nimbus-tales-studio-shop.fourthwall.com/products/${firstOffer.slug}`;
+    }
 
     if (uniqueProductIds.length > 0) {
       const batch = db.batch();
@@ -389,7 +519,7 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
       await batch.commit();
 
       console.log('[EMAIL] Starting thank-you email via Resend:', customerEmail);
-      await sendPurchaseThankYouEmail(customerEmail, payload.data?.id);
+      await sendPurchaseThankYouEmail(customerEmail, customerName, payload.data?.id, customSupportUrl);
       console.log('[EMAIL] Thank-you email function finished');
     }
 
