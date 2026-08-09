@@ -32,21 +32,25 @@ const app = express();
 // --- 2. RESEND EMAIL CLIENT ---
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-// E-mail küldő segédfüggvény vásárlás utáni köszönőlevélhez (Dinamikus support URL-lel)
+// E-mail küldő segédfüggvény vásárlás utáni köszönőlevélhez
 async function sendPurchaseThankYouEmail(
   toEmail: string, 
   customerName?: string, 
-  orderId?: string,
-  customSupportUrl?: string
+  orderId?: string
 ) {
   console.log(`[EMAIL] Sending thank-you email via Resend API to: ${toEmail}...`);
   
   const studioLogoUrl = 'https://www.nimbus-tales.com/images/nimbusTales.png'; 
-  // Dinamikus support URL, vagy fallback a general contact-ra
-  const fourthwallSupportUrl = customSupportUrl || 'https://nimbus-tales-studio-shop.fourthwall.com/contact/something-else';
+  
+  // Dinamikus Order Status URL a Fourthwall GUID alapján
+  const fourthwallOrderUrl = orderId 
+    ? `https://nimbus-tales-studio-shop.fourthwall.com/order/${orderId}/status`
+    : 'https://nimbus-tales-studio-shop.fourthwall.com/contact/something-else';
+
   const shopReviewUrl = 'https://www.nimbus-tales.com/webshop';
 
-  const greetingName = customerName?.trim() || 'there';
+  // Megszólítás: ha nincs név, az e-mail címet használja
+  const greetingName = customerName?.trim() || toEmail;
 
   const emailHtml = `
     <!DOCTYPE html>
@@ -87,7 +91,7 @@ async function sendPurchaseThankYouEmail(
                   </p>
 
                   <p style="color: #c5cbd8; margin-bottom: 20px;">
-                    Please note that manufacturing, fulfillment, and shipping are entirely handled by <strong>Fourthwall</strong>. If you have any questions regarding your package, tracking, or order support, please reach out directly to <a href="${fourthwallSupportUrl}" target="_blank" style="color: #cfa856; text-decoration: underline;">Fourthwall Order Support</a> or reply to your original Fourthwall confirmation email.
+                    Please note that manufacturing, fulfillment, and shipping are entirely handled by <strong>Fourthwall</strong>. You can track your package or manage order support directly via your <a href="${fourthwallOrderUrl}" target="_blank" style="color: #cfa856; text-decoration: underline;">Fourthwall Order Status Page</a>.
                   </p>
 
                   <!-- Inner Review Card -->
@@ -133,7 +137,7 @@ async function sendPurchaseThankYouEmail(
     </html>
   `;
 
-  const emailText = `Thank you for supporting Nimbus Tales, ${greetingName}! Your order is currently being prepared. Manufacturing, fulfillment, and shipping are handled by Fourthwall. If you have any questions regarding your package, please reach out to Fourthwall Support at ${fourthwallSupportUrl}. Once your order arrives, feel free to leave us a review at ${shopReviewUrl} ${orderId ? `(Order ID: #${orderId})` : ''}`;
+  const emailText = `Thank you for supporting Nimbus Tales, ${greetingName}! Your order is currently being prepared. Manufacturing, fulfillment, and shipping are handled by Fourthwall. You can check your order status at ${fourthwallOrderUrl}. Once your order arrives, feel free to leave us a review at ${shopReviewUrl} ${orderId ? `(Order ID: #${orderId})` : ''}`;
 
   try {
     const data = await resend.emails.send({
@@ -351,7 +355,6 @@ app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response)
 
     console.log(`[SUCCESS - 201] Review saved successfully with ID: ${customReviewId}`);
 
-    // Utókövető e-mail kiküldése aszinkron módon az értékelőnek (nem blokkolja a választ)
     sendReviewFollowUpEmail(cleanEmail, authorName.trim(), Number(rating));
 
     res.status(201).json({ success: true, id: customReviewId });
@@ -477,6 +480,7 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
 
     const customerEmail = rawEmail.toLowerCase().trim();
     const customerName = payload.data?.customer?.firstName || payload.data?.shippingAddress?.firstName || '';
+    const orderId = payload.data?.id;
     const customerRef = db.collection('verified_customers').doc(customerEmail);
 
     const offers = payload.data?.offers || [];
@@ -489,22 +493,12 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
       )
     );
 
-    // Dinamikus support URL keresése a megrendelt termékekből
-    let customSupportUrl: string | undefined = undefined;
-    const firstOffer = offers[0];
-    
-    if (firstOffer?.url) {
-      customSupportUrl = firstOffer.url;
-    } else if (firstOffer?.slug) {
-      customSupportUrl = `https://nimbus-tales-studio-shop.fourthwall.com/products/${firstOffer.slug}`;
-    }
-
     if (uniqueProductIds.length > 0) {
       const batch = db.batch();
 
       batch.set(customerRef, {
         lastOrderAt: FieldValue.serverTimestamp(),
-        lastOrderId: payload.data?.id || null,
+        lastOrderId: orderId || null,
         purchasedProducts: FieldValue.arrayUnion(...uniqueProductIds)
       }, { merge: true });
 
@@ -519,11 +513,11 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
       await batch.commit();
 
       console.log('[EMAIL] Starting thank-you email via Resend:', customerEmail);
-      await sendPurchaseThankYouEmail(customerEmail, customerName, payload.data?.id, customSupportUrl);
+      await sendPurchaseThankYouEmail(customerEmail, customerName, orderId);
       console.log('[EMAIL] Thank-you email function finished');
     }
 
-    console.log(`[WEBHOOK SUCCESS] Registered ${customerEmail} | Products:`, uniqueProductIds);
+    console.log(`[WEBHOOK SUCCESS] Registered ${customerEmail} | Order ID: ${orderId} | Products:`, uniqueProductIds);
     res.status(200).json({ received: true, email: customerEmail, products: uniqueProductIds });
 
   } catch (error) {
