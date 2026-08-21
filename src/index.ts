@@ -36,6 +36,7 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 async function sendDiscordOrderNotification(order: {
   orderId?: string;
   customerName: string;
+  customerEmail?: string; // JAVÍTVA: Helyes TypeScript típus
   totalAmount?: string;
   currency?: string;
   products?: {
@@ -43,7 +44,7 @@ async function sendDiscordOrderNotification(order: {
     quantity: number;
   }[];
 }) {
-  const workerUrl = process.env.DISCORD_WORKER_WEBHOOK_URL; // e.g. https://your-worker.workers.dev/webhook/sale
+  const workerUrl = process.env.DISCORD_WORKER_WEBHOOK_URL;
   const workerToken = process.env.WORKER_AUTH_TOKEN;
 
   if (!workerUrl || !workerToken) {
@@ -61,6 +62,7 @@ async function sendDiscordOrderNotification(order: {
       body: JSON.stringify({
         orderId: order.orderId || 'Unknown',
         customerName: order.customerName,
+        customerEmail: order.customerEmail || 'No Email Provided', // JAVÍTVA: Beküldi az emailt a Workernek
         totalAmount: order.totalAmount || '0.00',
         currency: order.currency || 'USD',
         products: order.products || [],
@@ -553,6 +555,7 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
     await sendDiscordOrderNotification({
       orderId: orderId,
       customerName: customerName,
+      customerEmail: customerEmail, // JAVÍTVA: Átadja az e-mailt a függvénynek
       totalAmount: payload.data?.total || payload.data?.totalPrice || payload.data?.amount,
       currency: payload.data?.currency || payload.data?.currencyCode || 'USD',
       products: formattedProducts
