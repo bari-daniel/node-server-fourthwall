@@ -32,28 +32,51 @@ const app = express();
 // --- RESEND EMAIL CLIENT ---
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-// --- DISCORD WEBHOOK HELPER ---
-async function sendDiscordNotification(embed: object) {
-  const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
-  if (!webhookUrl) {
-    console.warn('[DISCORD] DISCORD_WEBHOOK_URL is not configured in environment variables.');
+// --- CLOUDFLARE WORKER DISCORD DISPATCHER ---
+async function sendDiscordOrderNotification(order: {
+  orderId?: string;
+  customerName: string;
+  totalAmount?: string;
+  currency?: string;
+  products?: {
+    name: string;
+    quantity: number;
+  }[];
+}) {
+  const workerUrl = process.env.DISCORD_WORKER_WEBHOOK_URL; // e.g. https://your-worker.workers.dev/webhook/sale
+  const workerToken = process.env.WORKER_AUTH_TOKEN;
+
+  if (!workerUrl || !workerToken) {
+    console.error('[DISCORD] Worker webhook configuration missing (DISCORD_WORKER_WEBHOOK_URL or WORKER_AUTH_TOKEN).');
     return;
   }
 
   try {
-    const response = await fetch(webhookUrl, {
+    const response = await fetch(workerUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ embeds: [embed] }),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${workerToken}`,
+      },
+      body: JSON.stringify({
+        orderId: order.orderId || 'Unknown',
+        customerName: order.customerName,
+        totalAmount: order.totalAmount || '0.00',
+        currency: order.currency || 'USD',
+        products: order.products || [],
+      }),
     });
 
+    const responseText = await response.text();
+
     if (!response.ok) {
-      console.error(`[DISCORD ERROR] HTTP error: ${response.status}`);
-    } else {
-      console.log('[DISCORD SUCCESS] Notification sent to Discord!');
+      console.error(`[DISCORD] Worker returned HTTP ${response.status}:`, responseText);
+      return;
     }
+
+    console.log('[DISCORD SUCCESS] Order notification sent through Worker:', responseText);
   } catch (error) {
-    console.error('[DISCORD ERROR] Failed to send notification:', error);
+    console.error('[DISCORD ERROR] Failed to call Discord Worker:', error);
   }
 }
 
@@ -354,20 +377,6 @@ app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response)
 
     sendReviewFollowUpEmail(cleanEmail, authorName.trim(), Number(rating));
 
-    // DISCORD NOTIFICATION FOR NEW REVIEW
-    const stars = '⭐'.repeat(Number(rating));
-    await sendDiscordNotification({
-      title: '🌟 New Product Review Received!',
-      color: rating >= 4 ? 0x2ecc71 : 0xe74c3c, // Green for 4-5 stars, Red for lower
-      fields: [
-        { name: 'Author', value: authorName.trim(), inline: true },
-        { name: 'Rating', value: `${stars} (${rating}/5)`, inline: true },
-        { name: 'Product ID', value: cleanProductId, inline: false },
-        { name: 'Comment', value: comment.trim() }
-      ],
-      timestamp: new Date().toISOString()
-    });
-
     res.status(201).json({ success: true, id: customReviewId });
 
   } catch (error: any) {
@@ -424,7 +433,7 @@ app.get('/api/reviews/:productId', async (req: Request, res: Response): Promise<
   }
 });
 
-// 3. Fourthwall Webhook Handler (FIXED & BULLETPROOF VERSION)
+// 3. Fourthwall Webhook Handler
 app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promise<void> => {
   try {
     const webhookSecret = process.env.FOURTHWALL_WEBHOOK_SECRET;
@@ -500,7 +509,7 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
 
     const offers = payload.data?.offers || payload.data?.items || [];
     
-    // Safely extract Product IDs from multiple potential payload structures
+    // Extract unique product IDs for Firestore authorization
     const uniqueProductIds: string[] = Array.from(
       new Set(
         offers
@@ -509,7 +518,15 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
       )
     );
 
-    // Database save (always runs)
+    // Format products specifically for the Cloudflare Worker expectation
+    const formattedProducts = offers
+      .map((offer: any) => ({
+        name: offer.name || offer.product?.name || offer.productName || 'Unknown Product',
+        quantity: Number(offer.quantity || offer.qty || 1) || 1,
+      }))
+      .filter((p: { name: string }) => p.name);
+
+    // Save to Firestore
     const batch = db.batch();
     batch.set(customerRef, {
       lastOrderAt: FieldValue.serverTimestamp(),
@@ -527,24 +544,21 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
 
     await batch.commit();
 
-    // Send thank-you email
+    // Send thank-you email via Resend
     console.log('[EMAIL] Starting thank-you email via Resend:', customerEmail);
     await sendPurchaseThankYouEmail(customerEmail, customerName, orderId);
 
-    // DISCORD NOTIFICATION (GUARANTEED TO EXECUTE!)
-    console.log('[DISCORD] Sending order notification embed...');
-    await sendDiscordNotification({
-      title: '🛍️ New Order Received!',
-      color: 0xcfa856, // Nimbus Gold
-      fields: [
-        { name: 'Customer', value: customerName, inline: true },
-        { name: 'Order ID', value: `#${orderId || 'Unknown'}`, inline: true },
-        { name: 'Item Count', value: `${uniqueProductIds.length} item(s)`, inline: false }
-      ],
-      timestamp: new Date().toISOString()
+    // CALL CLOUDFLARE WORKER DISCORD BOT
+    console.log('[DISCORD] Forwarding order details to Cloudflare Worker...');
+    await sendDiscordOrderNotification({
+      orderId: orderId,
+      customerName: customerName,
+      totalAmount: payload.data?.total || payload.data?.totalPrice || payload.data?.amount,
+      currency: payload.data?.currency || payload.data?.currencyCode || 'USD',
+      products: formattedProducts
     });
 
-    console.log(`[WEBHOOK SUCCESS] Registered ${customerEmail} | Order ID: ${orderId} | Products:`, uniqueProductIds);
+    console.log(`[WEBHOOK SUCCESS] Processed order for ${customerEmail} | Order ID: ${orderId}`);
     res.status(200).json({ received: true, email: customerEmail, products: uniqueProductIds });
 
   } catch (error) {
