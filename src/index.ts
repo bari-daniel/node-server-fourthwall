@@ -84,11 +84,13 @@ async function sendDiscordOrderNotification(order: {
 
 // --- CLOUDFLARE WORKER DISCORD REVIEW DISPATCHER ---
 async function sendDiscordReviewNotification(review: {
+  reviewId: string;
   productId: string;
   authorName: string;
   authorEmail: string;
   rating: number;
   comment: string;
+  imageUrl?: string;
 }) {
   const workerBaseUrl = process.env.DISCORD_WORKER_WEBHOOK_URL;
   const workerToken = process.env.WORKER_AUTH_TOKEN;
@@ -367,12 +369,13 @@ interface ReviewBody {
   authorEmail: string;
   rating: number;
   comment: string;
+  imageUrl?: string;
 }
 
 // 1. Submit review endpoint
 app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response): Promise<void> => {
   try {
-    const { productId, authorName, authorEmail, rating, comment } = req.body;
+    const { productId, authorName, authorEmail, rating, comment, imageUrl } = req.body;
 
     if (!productId || !authorName || !authorEmail || !rating || rating < 1 || rating > 5 || !comment?.trim()) {
       res.status(400).json({ error: 'All fields are required, and rating must be between 1 and 5.' });
@@ -411,6 +414,7 @@ app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response)
         authorEmail: cleanEmail,
         rating: Number(rating),
         comment: comment.trim(),
+        imageUrl: imageUrl || null,
         verifiedPurchase: true,
         createdAt: FieldValue.serverTimestamp()
       });
@@ -421,13 +425,15 @@ app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response)
     // Email küldése a vásárlónak Resend-en keresztül
     sendReviewFollowUpEmail(cleanEmail, authorName.trim(), Number(rating));
 
-    // Discord értesítés küldése a Cloudflare Worker-nek
+    // Discord értesítés küldése a Cloudflare Worker-nek (Név, Email, ID, Csillagok, Komment, Kép)
     sendDiscordReviewNotification({
+      reviewId: customReviewId,
       productId: cleanProductId,
       authorName: authorName.trim(),
       authorEmail: cleanEmail,
       rating: Number(rating),
       comment: comment.trim(),
+      imageUrl: imageUrl
     });
 
     res.status(201).json({ success: true, id: customReviewId });
@@ -468,6 +474,7 @@ app.get('/api/reviews/:productId', async (req: Request, res: Response): Promise<
         authorName: data['authorName'],
         rating: data['rating'],
         comment: data['comment'],
+        imageUrl: data['imageUrl'] || null,
         verifiedPurchase: data['verifiedPurchase'],
         createdAt: data['createdAt']?.toDate() || null
       };
