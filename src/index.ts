@@ -439,7 +439,7 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
       const computedSignature = crypto
         .createHmac('sha256', webhookSecret)
         .update(rawBody)
-        .digest('hex');
+        .digest('base64');
 
       const signatureBuffer = Buffer.from(signatureHeader);
       const computedBuffer = Buffer.from(computedSignature);
