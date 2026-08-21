@@ -32,11 +32,11 @@ const app = express();
 // --- RESEND EMAIL CLIENT ---
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-// --- CLOUDFLARE WORKER DISCORD DISPATCHER ---
+// --- CLOUDFLARE WORKER DISCORD ORDER DISPATCHER ---
 async function sendDiscordOrderNotification(order: {
   orderId?: string;
   customerName: string;
-  customerEmail?: string; // JAVÍTVA: Helyes TypeScript típus
+  customerEmail?: string;
   totalAmount?: string;
   currency?: string;
   products?: {
@@ -62,7 +62,7 @@ async function sendDiscordOrderNotification(order: {
       body: JSON.stringify({
         orderId: order.orderId || 'Unknown',
         customerName: order.customerName,
-        customerEmail: order.customerEmail || 'No Email Provided', // JAVÍTVA: Beküldi az emailt a Workernek
+        customerEmail: order.customerEmail || 'No Email Provided',
         totalAmount: order.totalAmount || '0.00',
         currency: order.currency || 'USD',
         products: order.products || [],
@@ -79,6 +79,47 @@ async function sendDiscordOrderNotification(order: {
     console.log('[DISCORD SUCCESS] Order notification sent through Worker:', responseText);
   } catch (error) {
     console.error('[DISCORD ERROR] Failed to call Discord Worker:', error);
+  }
+}
+
+// --- CLOUDFLARE WORKER DISCORD REVIEW DISPATCHER ---
+async function sendDiscordReviewNotification(review: {
+  productId: string;
+  authorName: string;
+  authorEmail: string;
+  rating: number;
+  comment: string;
+}) {
+  const workerBaseUrl = process.env.DISCORD_WORKER_WEBHOOK_URL;
+  const workerToken = process.env.WORKER_AUTH_TOKEN;
+
+  if (!workerBaseUrl || !workerToken) {
+    console.error('[DISCORD REVIEW] Worker configuration missing.');
+    return;
+  }
+
+  // Automatikusan kicseréli a /webhook/sale végződést /webhook/review-ra
+  const reviewWorkerUrl = workerBaseUrl.replace(/\/webhook\/sale\/?$/, '/webhook/review');
+
+  try {
+    const response = await fetch(reviewWorkerUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${workerToken}`,
+      },
+      body: JSON.stringify(review),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      console.error(`[DISCORD REVIEW ERROR] HTTP ${response.status}:`, text);
+      return;
+    }
+
+    console.log('[DISCORD REVIEW SUCCESS] Review notification sent through Worker!');
+  } catch (error) {
+    console.error('[DISCORD REVIEW ERROR] Failed to send review notification:', error);
   }
 }
 
@@ -377,7 +418,17 @@ app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response)
 
     console.log(`[SUCCESS - 201] Review saved successfully with ID: ${customReviewId}`);
 
+    // Email küldése a vásárlónak Resend-en keresztül
     sendReviewFollowUpEmail(cleanEmail, authorName.trim(), Number(rating));
+
+    // Discord értesítés küldése a Cloudflare Worker-nek
+    sendDiscordReviewNotification({
+      productId: cleanProductId,
+      authorName: authorName.trim(),
+      authorEmail: cleanEmail,
+      rating: Number(rating),
+      comment: comment.trim(),
+    });
 
     res.status(201).json({ success: true, id: customReviewId });
 
@@ -550,12 +601,12 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
     console.log('[EMAIL] Starting thank-you email via Resend:', customerEmail);
     await sendPurchaseThankYouEmail(customerEmail, customerName, orderId);
 
-    // CALL CLOUDFLARE WORKER DISCORD BOT
+    // CALL CLOUDFLARE WORKER DISCORD BOT FOR ORDERS
     console.log('[DISCORD] Forwarding order details to Cloudflare Worker...');
     await sendDiscordOrderNotification({
       orderId: orderId,
       customerName: customerName,
-      customerEmail: customerEmail, // JAVÍTVA: Átadja az e-mailt a függvénynek
+      customerEmail: customerEmail,
       totalAmount: payload.data?.total || payload.data?.totalPrice || payload.data?.amount,
       currency: payload.data?.currency || payload.data?.currencyCode || 'USD',
       products: formattedProducts
