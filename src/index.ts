@@ -8,7 +8,7 @@ import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 
 dotenv.config();
 
-// 1. CORS Beállítás
+// 1. CORS Setup
 const rawAllowedOrigins = process.env.ALLOWED_ORIGIN || '';
 const allowedOrigins = rawAllowedOrigins
   .split(',')
@@ -57,7 +57,7 @@ async function sendDiscordNotification(embed: object) {
   }
 }
 
-// E-mail küldő segédfüggvény vásárlás utáni köszönőlevélhez
+// Email helper function for purchase thank-you emails
 async function sendPurchaseThankYouEmail(
   toEmail: string, 
   customerName?: string, 
@@ -161,7 +161,7 @@ async function sendPurchaseThankYouEmail(
   }
 }
 
-// E-mail küldő segédfüggvény értékelés beküldése után
+// Email helper function for review follow-ups
 async function sendReviewFollowUpEmail(toEmail: string, authorName: string, rating: number) {
   console.log(`[REVIEW EMAIL] Sending follow-up email for ${rating}-star review to: ${toEmail}...`);
 
@@ -263,7 +263,7 @@ async function sendReviewFollowUpEmail(toEmail: string, authorName: string, rati
   }
 }
 
-// Globális CORS opciók
+// Global CORS options
 const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
     if (!origin || allowedOrigins.includes(origin) || allowedOrigins.length === 0) {
@@ -286,7 +286,7 @@ app.use(express.json({
   }
 }));
 
-// Healthcheck endpointok
+// Healthcheck endpoints
 app.get('/', (req: Request, res: Response): void => {
   res.status(200).send('Server is alive and running!');
 });
@@ -303,7 +303,7 @@ interface ReviewBody {
   comment: string;
 }
 
-// 1. Review beküldése
+// 1. Submit review endpoint
 app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response): Promise<void> => {
   try {
     const { productId, authorName, authorEmail, rating, comment } = req.body;
@@ -356,7 +356,7 @@ app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response)
 
     // DISCORD NOTIFICATION FOR NEW REVIEW
     const stars = '⭐'.repeat(Number(rating));
-    sendDiscordNotification({
+    await sendDiscordNotification({
       title: '🌟 New Product Review Received!',
       color: rating >= 4 ? 0x2ecc71 : 0xe74c3c, // Green for 4-5 stars, Red for lower
       fields: [
@@ -389,7 +389,7 @@ app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response)
   }
 });
 
-// 2. Értékelések lekérése
+// 2. Fetch reviews endpoint
 app.get('/api/reviews/:productId', async (req: Request, res: Response): Promise<void> => {
   try {
     const { productId } = req.params;
@@ -424,7 +424,7 @@ app.get('/api/reviews/:productId', async (req: Request, res: Response): Promise<
   }
 });
 
-// 3. Fourthwall Webhook Handler
+// 3. Fourthwall Webhook Handler (FIXED & BULLETPROOF VERSION)
 app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promise<void> => {
   try {
     const webhookSecret = process.env.FOURTHWALL_WEBHOOK_SECRET;
@@ -478,67 +478,71 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
     }
 
     const eventType = (payload.type || payload.event || '').toUpperCase();
-    if (eventType !== 'ORDER_PLACED') {
+    console.log(`[WEBHOOK RECEIVED] Processing event type: ${eventType}`);
+
+    // Accepts both ORDER_PLACED and ORDER_CREATED event types
+    if (eventType !== 'ORDER_PLACED' && eventType !== 'ORDER_CREATED') {
       res.status(200).json({ received: true, note: `Event type ${eventType || 'UNKNOWN'} ignored` });
       return;
     }
 
     const rawEmail = payload.data?.email || payload.data?.customer?.email;
     if (!rawEmail) {
+      console.warn('[WEBHOOK WARNING] No email found in payload:', JSON.stringify(payload));
       res.status(200).json({ received: true, warning: 'No email found in payload' });
       return;
     }
 
     const customerEmail = rawEmail.toLowerCase().trim();
-    const customerName = payload.data?.customer?.firstName || payload.data?.shippingAddress?.firstName || '';
-    const orderId = payload.data?.id;
+    const customerName = payload.data?.customer?.firstName || payload.data?.shippingAddress?.firstName || 'Customer';
+    const orderId = payload.data?.id || payload.data?.orderId;
     const customerRef = db.collection('verified_customers').doc(customerEmail);
 
-    const offers = payload.data?.offers || [];
+    const offers = payload.data?.offers || payload.data?.items || [];
     
+    // Safely extract Product IDs from multiple potential payload structures
     const uniqueProductIds: string[] = Array.from(
       new Set(
         offers
-          .map((offer: any) => offer.id)
+          .map((offer: any) => offer.id || offer.productId || offer.product?.id)
           .filter((id: any): id is string => typeof id === 'string' && id.length > 0)
       )
     );
 
-    if (uniqueProductIds.length > 0) {
-      const batch = db.batch();
+    // Database save (always runs)
+    const batch = db.batch();
+    batch.set(customerRef, {
+      lastOrderAt: FieldValue.serverTimestamp(),
+      lastOrderId: orderId || null,
+      purchasedProducts: uniqueProductIds.length > 0 ? FieldValue.arrayUnion(...uniqueProductIds) : []
+    }, { merge: true });
 
-      batch.set(customerRef, {
-        lastOrderAt: FieldValue.serverTimestamp(),
-        lastOrderId: orderId || null,
-        purchasedProducts: FieldValue.arrayUnion(...uniqueProductIds)
-      }, { merge: true });
-
-      if (eventId) {
-        const webhookRef = db.collection('processed_webhooks').doc(eventId);
-        batch.set(webhookRef, {
-          processedAt: FieldValue.serverTimestamp(),
-          type: eventType
-        });
-      }
-
-      await batch.commit();
-
-      console.log('[EMAIL] Starting thank-you email via Resend:', customerEmail);
-      await sendPurchaseThankYouEmail(customerEmail, customerName, orderId);
-      console.log('[EMAIL] Thank-you email function finished');
-
-      // DISCORD NOTIFICATION FOR NEW ORDER
-      sendDiscordNotification({
-        title: '🛍️ New Order Placed!',
-        color: 0xcfa856, // Nimbus Gold
-        fields: [
-          { name: 'Customer', value: customerName || 'Anonymous', inline: true },
-          { name: 'Order ID', value: `#${orderId || 'Unknown'}`, inline: true },
-          { name: 'Unique Items', value: `${uniqueProductIds.length} item(s)`, inline: false }
-        ],
-        timestamp: new Date().toISOString()
+    if (eventId) {
+      const webhookRef = db.collection('processed_webhooks').doc(eventId);
+      batch.set(webhookRef, {
+        processedAt: FieldValue.serverTimestamp(),
+        type: eventType
       });
     }
+
+    await batch.commit();
+
+    // Send thank-you email
+    console.log('[EMAIL] Starting thank-you email via Resend:', customerEmail);
+    await sendPurchaseThankYouEmail(customerEmail, customerName, orderId);
+
+    // DISCORD NOTIFICATION (GUARANTEED TO EXECUTE!)
+    console.log('[DISCORD] Sending order notification embed...');
+    await sendDiscordNotification({
+      title: '🛍️ New Order Received!',
+      color: 0xcfa856, // Nimbus Gold
+      fields: [
+        { name: 'Customer', value: customerName, inline: true },
+        { name: 'Order ID', value: `#${orderId || 'Unknown'}`, inline: true },
+        { name: 'Item Count', value: `${uniqueProductIds.length} item(s)`, inline: false }
+      ],
+      timestamp: new Date().toISOString()
+    });
 
     console.log(`[WEBHOOK SUCCESS] Registered ${customerEmail} | Order ID: ${orderId} | Products:`, uniqueProductIds);
     res.status(200).json({ received: true, email: customerEmail, products: uniqueProductIds });
