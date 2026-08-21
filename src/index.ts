@@ -29,8 +29,33 @@ initializeApp({
 const db = getFirestore();
 const app = express();
 
-// --- 2. RESEND EMAIL CLIENT ---
+// --- RESEND EMAIL CLIENT ---
 const resend = new Resend(process.env.RESEND_API_KEY);
+
+// --- DISCORD WEBHOOK HELPER ---
+async function sendDiscordNotification(embed: object) {
+  const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
+  if (!webhookUrl) {
+    console.warn('[DISCORD] DISCORD_WEBHOOK_URL is not configured in environment variables.');
+    return;
+  }
+
+  try {
+    const response = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ embeds: [embed] }),
+    });
+
+    if (!response.ok) {
+      console.error(`[DISCORD ERROR] HTTP error: ${response.status}`);
+    } else {
+      console.log('[DISCORD SUCCESS] Notification sent to Discord!');
+    }
+  } catch (error) {
+    console.error('[DISCORD ERROR] Failed to send notification:', error);
+  }
+}
 
 // E-mail küldő segédfüggvény vásárlás utáni köszönőlevélhez
 async function sendPurchaseThankYouEmail(
@@ -42,14 +67,11 @@ async function sendPurchaseThankYouEmail(
   
   const studioLogoUrl = 'https://www.nimbus-tales.com/images/nimbusTales.png'; 
   
-  // Dinamikus Order Status URL a Fourthwall GUID alapján
   const fourthwallOrderUrl = orderId 
     ? `https://nimbus-tales-studio-shop.fourthwall.com/order/${orderId}/status`
     : 'https://nimbus-tales-studio-shop.fourthwall.com/contact/something-else';
 
   const shopReviewUrl = 'https://www.nimbus-tales.com/webshop';
-
-  // Megszólítás: ha nincs név, az e-mail címet használja
   const greetingName = customerName?.trim() || toEmail;
 
   const emailHtml = `
@@ -64,11 +86,7 @@ async function sendPurchaseThankYouEmail(
       <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #030407; padding: 40px 10px;">
         <tr>
           <td align="center">
-            
-            <!-- Main Card Container -->
             <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 600px; background: linear-gradient(180deg, #090e1c 0%, #030407 100%); border: 1px solid #1a233a; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
-              
-              <!-- Header / Branding -->
               <tr>
                 <td align="center" style="padding: 35px 20px 20px 20px; border-bottom: 1px solid rgba(207, 168, 86, 0.15);">
                   <img src="${studioLogoUrl}" alt="Nimbus Tales" width="110" style="display: block; width: 110px; height: auto; border: 0; outline: none; margin-bottom: 12px;" />
@@ -77,31 +95,22 @@ async function sendPurchaseThankYouEmail(
                   </h1>
                 </td>
               </tr>
-
-              <!-- Main Body / Message -->
               <tr>
                 <td style="padding: 35px 30px; color: #f8f9fa; font-size: 15px; line-height: 1.7;">
-                  
                   <p style="margin-top: 0; font-size: 18px; font-weight: 600; color: #ffffff;">
                     Thank you for your support, ${greetingName}! ✨
                   </p>
-                  
                   <p style="color: #c5cbd8; margin-bottom: 16px;">
                     We wanted to personally thank you for supporting <strong>Nimbus Tales</strong>! Your order is currently being prepared for production and shipment.
                   </p>
-
                   <p style="color: #c5cbd8; margin-bottom: 20px;">
                     Please note that manufacturing, fulfillment, and shipping are entirely handled by <strong>Fourthwall</strong>. You can track your package or manage order support directly via your <a href="${fourthwallOrderUrl}" target="_blank" style="color: #cfa856; text-decoration: underline;">Fourthwall Order Status Page</a>.
                   </p>
-
-                  <!-- Inner Review Card -->
                   <div style="background-color: rgba(9, 14, 28, 0.7); border: 1px solid rgba(207, 168, 86, 0.2); border-radius: 12px; padding: 20px; margin: 25px 0; text-align: center;">
                     <div style="font-size: 20px; margin-bottom: 8px;">⭐ ⭐ ⭐ ⭐ ⭐</div>
                     <p style="margin: 0 0 15px 0; font-size: 14px; color: #f8f9fa; font-weight: 500;">
                       Once your order arrives, we would be deeply grateful if you could take a quick moment to leave a review on our store!
                     </p>
-                    
-                    <!-- CTA Button -->
                     <table role="presentation" border="0" cellspacing="0" cellpadding="0" align="center" style="margin: 0 auto;">
                       <tr>
                         <td align="center" style="border-radius: 8px; background-color: #cfa856;">
@@ -112,13 +121,9 @@ async function sendPurchaseThankYouEmail(
                       </tr>
                     </table>
                   </div>
-
                   ${orderId ? `<p style="font-size: 12px; color: #6c757d; text-align: center; margin-bottom: 0;">Order ID: <span style="color: #cfa856;">#${orderId}</span></p>` : ''}
-
                 </td>
               </tr>
-
-              <!-- Footer -->
               <tr>
                 <td align="center" style="padding: 20px; background-color: rgba(0, 0, 0, 0.3); border-top: 1px solid #121929; font-size: 12px; color: #6c757d;">
                   <p style="margin: 0 0 6px 0;">© ${new Date().getFullYear()} Nimbus Tales Studio. All rights reserved.</p>
@@ -127,9 +132,7 @@ async function sendPurchaseThankYouEmail(
                   </p>
                 </td>
               </tr>
-
             </table>
-
           </td>
         </tr>
       </table>
@@ -205,7 +208,6 @@ async function sendReviewFollowUpEmail(toEmail: string, authorName: string, rati
         <tr>
           <td align="center">
             <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 600px; background: linear-gradient(180deg, #090e1c 0%, #030407 100%); border: 1px solid #1a233a; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
-              
               <tr>
                 <td align="center" style="padding: 35px 20px 20px 20px; border-bottom: 1px solid rgba(207, 168, 86, 0.15);">
                   <img src="${studioLogoUrl}" alt="Nimbus Tales" width="110" style="display: block; width: 110px; height: auto; border: 0; outline: none; margin-bottom: 12px;" />
@@ -214,18 +216,14 @@ async function sendReviewFollowUpEmail(toEmail: string, authorName: string, rati
                   </h1>
                 </td>
               </tr>
-
               <tr>
                 <td style="padding: 35px 30px; color: #f8f9fa; font-size: 15px; line-height: 1.7;">
                   <p style="margin-top: 0; font-size: 18px; font-weight: 600; color: #ffffff;">
                     ${titleText}
                   </p>
-                  
                   ${bodyContentHtml}
-
                 </td>
               </tr>
-
               <tr>
                 <td align="center" style="padding: 20px; background-color: rgba(0, 0, 0, 0.3); border-top: 1px solid #121929; font-size: 12px; color: #6c757d;">
                   <p style="margin: 0 0 6px 0;">© ${new Date().getFullYear()} Nimbus Tales Studio. All rights reserved.</p>
@@ -234,7 +232,6 @@ async function sendReviewFollowUpEmail(toEmail: string, authorName: string, rati
                   </p>
                 </td>
               </tr>
-
             </table>
           </td>
         </tr>
@@ -356,6 +353,20 @@ app.post('/api/reviews', async (req: Request<{}, {}, ReviewBody>, res: Response)
     console.log(`[SUCCESS - 201] Review saved successfully with ID: ${customReviewId}`);
 
     sendReviewFollowUpEmail(cleanEmail, authorName.trim(), Number(rating));
+
+    // DISCORD NOTIFICATION FOR NEW REVIEW
+    const stars = '⭐'.repeat(Number(rating));
+    sendDiscordNotification({
+      title: '🌟 New Product Review Received!',
+      color: rating >= 4 ? 0x2ecc71 : 0xe74c3c, // Green for 4-5 stars, Red for lower
+      fields: [
+        { name: 'Author', value: authorName.trim(), inline: true },
+        { name: 'Rating', value: `${stars} (${rating}/5)`, inline: true },
+        { name: 'Product ID', value: cleanProductId, inline: false },
+        { name: 'Comment', value: comment.trim() }
+      ],
+      timestamp: new Date().toISOString()
+    });
 
     res.status(201).json({ success: true, id: customReviewId });
 
@@ -515,6 +526,18 @@ app.post('/api/webhooks/fourthwall', async (req: Request, res: Response): Promis
       console.log('[EMAIL] Starting thank-you email via Resend:', customerEmail);
       await sendPurchaseThankYouEmail(customerEmail, customerName, orderId);
       console.log('[EMAIL] Thank-you email function finished');
+
+      // DISCORD NOTIFICATION FOR NEW ORDER
+      sendDiscordNotification({
+        title: '🛍️ New Order Placed!',
+        color: 0xcfa856, // Nimbus Gold
+        fields: [
+          { name: 'Customer', value: customerName || 'Anonymous', inline: true },
+          { name: 'Order ID', value: `#${orderId || 'Unknown'}`, inline: true },
+          { name: 'Unique Items', value: `${uniqueProductIds.length} item(s)`, inline: false }
+        ],
+        timestamp: new Date().toISOString()
+      });
     }
 
     console.log(`[WEBHOOK SUCCESS] Registered ${customerEmail} | Order ID: ${orderId} | Products:`, uniqueProductIds);
